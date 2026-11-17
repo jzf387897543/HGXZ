@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.error import HTTPError
 import argparse
 import json
 import logging
@@ -55,7 +56,17 @@ class Archiver:
             known_total: int | None = None
             while page <= self.MAX_CATEGORY_PAGES:
                 path = category['path'] if page == 1 else category['path'].rstrip('/') + f'/{page}/'
-                html = self.client.get_text(path)
+                try:
+                    html = self.client.get_text(path)
+                except HTTPError as exc:
+                    # The site returns 404 for pages past the last one. Treat
+                    # that as the end of pagination instead of failing the
+                    # whole sync (which left the state DB empty).
+                    if exc.code == 404 and page > 1:
+                        LOG.info('category=%s page %d not found, stopping pagination',
+                                 category['name'], page)
+                        break
+                    raise
                 ids, page_total = parse_category_panel(html)
                 if page_total is not None:
                     known_total = page_total
