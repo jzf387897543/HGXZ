@@ -85,6 +85,30 @@ class HuangguoClient:
         return self._request('GET', url)
 
     def play_url(self, album_id: int, episode: int) -> str:
+        # The site now serves the playable manifest from
+        # POST /api/videos/<id>/episodes/<ep>/playback (data.streams.main).
+        # The legacy GET /api/videos/<id>/play still answers status=1 but
+        # responds with an empty video_url, so try the new endpoint first and
+        # fall back to the old one for mirrors that have not switched yet.
+        try:
+            raw = self._request(
+                'POST',
+                f'/api/videos/{int(album_id)}/episodes/{int(episode)}/playback',
+                data=b'{}',
+                headers={'Content-Type': 'application/json'},
+            )
+            payload = json.loads(raw)
+            if payload.get('status') == 1:
+                streams = (payload.get('data') or {}).get('streams') or {}
+                url = (streams.get('main') or streams.get('hevc') or '').strip()
+                if url:
+                    return url
+            else:
+                LOG.warning('playback endpoint returned status=%s msg=%s',
+                            payload.get('status'), payload.get('msg'))
+        except (HTTPError, URLError, TimeoutError, ConnectionError, OSError, ValueError) as error:
+            LOG.warning('playback endpoint failed (%s); falling back to legacy play endpoint', error)
+
         raw = self._request('GET', f'/api/videos/{int(album_id)}/play?' + urlencode({'ep': int(episode)}))
         payload = json.loads(raw)
         if payload.get('status') != 1:
